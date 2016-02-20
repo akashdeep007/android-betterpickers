@@ -618,48 +618,53 @@ public class RadialPickerLayout extends FrameLayout implements OnTouchListener {
                 return true;
             case MotionEvent.ACTION_MOVE:
                 if (!mInputEnabled) {
-                    // We shouldn't be in this state, because input is disabled.
-                    Log.e(TAG, "Input was disabled, but received ACTION_MOVE.");
                     return true;
                 }
 
-                float dY = Math.abs(eventY - mDownY);
-                float dX = Math.abs(eventX - mDownX);
+                mDownX = eventX;
+                mDownY = eventY;
 
-                if (!mDoingMove && dX <= TOUCH_SLOP && dY <= TOUCH_SLOP) {
-                    // Hasn't registered down yet, just slight, accidental movement of finger.
-                    break;
+                mLastValueSelected = -1;
+                mDoingMove = false;
+                mDoingTouch = true;
+                // If we're showing the AM/PM, check to see if the user is touching it.
+                if (!mHideAmPm) {
+                    mIsTouchingAmOrPm = mAmPmCirclesView.getIsTouchingAmOrPm(eventX, eventY);
+                } else {
+                    mIsTouchingAmOrPm = -1;
                 }
-
-                // If we're in the middle of touching down on AM or PM, check if we still are.
-                // If so, no-op. If not, remove its pressed state. Either way, no need to check
-                // for touches on the other circle.
                 if (mIsTouchingAmOrPm == AM || mIsTouchingAmOrPm == PM) {
-                    mHandler.removeCallbacksAndMessages(null);
-                    int isTouchingAmOrPm = mAmPmCirclesView.getIsTouchingAmOrPm(eventX, eventY);
-                    if (isTouchingAmOrPm != mIsTouchingAmOrPm) {
-                        mAmPmCirclesView.setAmOrPmPressed(-1);
-                        mAmPmCirclesView.invalidate();
-                        mIsTouchingAmOrPm = -1;
-                    }
-                    break;
-                }
-
-                if (mDownDegrees == -1) {
-                    // Original down was illegal, so no movement will register.
-                    break;
-                }
-
-                // We're doing a move along the circle, so move the selection as appropriate.
-                mDoingMove = true;
-                mHandler.removeCallbacksAndMessages(null);
-                degrees = getDegreesFromCoords(eventX, eventY, true, isInnerCircle);
-                if (degrees != -1) {
-                    value = reselectSelector(degrees, isInnerCircle[0], false, true);
-                    if (value != mLastValueSelected) {
+                    // If the touch is on AM or PM, set it as "touched" after the tapTimeout
+                    // in case the user moves their finger quickly.
+                    mHapticFeedbackController.tryVibrate();
+                    mDownDegrees = -1;
+                    mHandler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            mAmPmCirclesView.setAmOrPmPressed(mIsTouchingAmOrPm);
+                            mAmPmCirclesView.invalidate();
+                        }
+                    }, TAP_TIMEOUT);
+                } else {
+                    // If we're in accessibility mode, force the touch to be legal. Otherwise,
+                    // it will only register within the given touch target zone.
+                    boolean forceLegal = AccessibilityManagerCompat.isTouchExplorationEnabled(mAccessibilityManager);
+                    // Calculate the degrees that is currently being touched.
+                    mDownDegrees = getDegreesFromCoords(eventX, eventY, forceLegal, isInnerCircle);
+                    if (mDownDegrees != -1) {
+                        // If it's a legal touch, set that number as "selected" after the
+                        // tapTimeout in case the user moves their finger quickly.
                         mHapticFeedbackController.tryVibrate();
-                        mLastValueSelected = value;
-                        mListener.onValueSelected(getCurrentItemShowing(), value, false);
+                        mHandler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                mDoingMove = true;
+                                int value = reselectSelector(mDownDegrees, isInnerCircle[0],
+                                        false, true);
+                                mLastValueSelected = value;
+                                mListener.onValueSelected(getCurrentItemShowing(), value, false);
+                            }
+                        }, TAP_TIMEOUT);
                     }
                 }
                 return true;
